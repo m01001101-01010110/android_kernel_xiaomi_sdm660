@@ -30,7 +30,6 @@ static void proc_command_line_init(void) {
 	offset_addr = strstr(proc_command_line, INITRAMFS_STR_FIND);
 	if (offset_addr)
 	memcpy(offset_addr, INITRAMFS_STR_REPLACE, INITRAMFS_STR_LEN);
-}
 #endif
 
 #ifdef CONFIG_PROC_CMDLINE_APPEND_ANDROID_FORCE_NORMAL_BOOT
