@@ -17,6 +17,8 @@
 /* sdm660.dtsi jasmine specific diff */
 &firmware {
 	android {
+		/delete-node/ dtbo_a;
+        	/delete-node/ dtbo_b;
 		vbmeta {
 			status = "disabled";
 		};
