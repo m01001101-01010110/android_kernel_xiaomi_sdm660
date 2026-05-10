@@ -1,0 +1,480 @@
+================================================================================
+  KERNEL 4.4 TO 4.19 PORTING CHECKLIST - XIAOMI JASMINE_SPROUT (Mi A2)
+================================================================================
+
+This is a step-by-step checklist for porting kernel from 4.4 to 4.19 while
+maintaining maximum compatibility with Xiaomi's vendor customizations.
+
+================================================================================
+PHASE 1: PREPARATION & EXTRACTION
+================================================================================
+
+[ ] 1.1 Clone kernel repositories
+        git clone -b lineage-18.1 <repo> kernel-4.4
+        git clone <kernel-4.19-upstream> kernel-4.19
+
+[ ] 1.2 Extract Xiaomi patches from 4.4
+        cd kernel-4.4
+        git diff linux-4.4.302..HEAD > xiaomi-4.4-all.patch
+        wc -l xiaomi-4.4-all.patch
+
+[ ] 1.3 Analyze patch statistics
+        grep '^diff --git' xiaomi-4.4-all.patch | wc -l  # Number of files changed
+        grep '^@@' xiaomi-4.4-all.patch | wc -l          # Number of hunks
+
+[ ] 1.4 Categorize Xiaomi customizations
+        # Extract by directory
+        grep '^diff --git a/drivers' xiaomi-4.4-all.patch > drivers-changes.patch
+        grep '^diff --git a/arch' xiaomi-4.4-all.patch > arch-changes.patch
+        grep '^diff --git a/sound' xiaomi-4.4-all.patch > sound-changes.patch
+        # Review each category
+
+[ ] 1.5 Identify device-specific vs general patches
+        # Device-specific: device tree, defconfig, jasmine_sprout references
+        # General: bug fixes that may already be in 4.19
+
+================================================================================
+PHASE 2: KERNEL 4.19 BASE SETUP
+================================================================================
+
+[ ] 2.1 Checkout clean 4.19 kernel
+        cd kernel-4.19
+        git checkout v4.19.295
+        # or: git checkout lts/4.19
+
+[ ] 2.2 Verify 4.19 baseline builds
+        make O=out ARCH=arm64 defconfig
+        make -j$(nproc) O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-android-
+        # Should complete without errors
+
+[ ] 2.3 Create work branch
+        git checkout -b jasmine-sprout-4.19
+
+================================================================================
+PHASE 3: CRITICAL FILES - DEVICE TREE
+================================================================================
+
+[ ] 3.1 Copy device tree files
+        cp kernel-4.4/arch/arm64/boot/dts/qcom/jasmine_sprout*.dts* \
+           kernel-4.19/arch/arm64/boot/dts/qcom/
+        # Files to copy:
+        #   - jasmine_sprout.dts (main device tree)
+        #   - jasmine_sprout-*.dtsi (variants if any)
+        #   - Any included .dtsi files
+
+[ ] 3.2 Validate device tree syntax
+        cd kernel-4.19
+        dtc -I dts -O dtb arch/arm64/boot/dts/qcom/jasmine_sprout.dts -o /tmp/test.dtb
+        # Should complete without warnings/errors
+
+[ ] 3.3 Check for 4.4-specific properties
+        # Look for deprecated properties
+        grep -r 'clock-latency' arch/arm64/boot/dts/qcom/jasmine_sprout.dts
+        grep -r 'regulator-compatible' arch/arm64/boot/dts/qcom/
+        # Research if these need updating for 4.19
+
+[ ] 3.4 Verify compatible strings match 4.19 bindings
+        # Extract compatible strings from DT
+        grep compatible arch/arm64/boot/dts/qcom/jasmine_sprout.dts
+        # Check against 4.19 drivers
+        find drivers -name '*.c' | xargs grep 'of_device_id' | grep msm8998
+
+[ ] 3.5 Update device tree includes if needed
+        # Check for any includes that don't exist in 4.19
+        grep '^#include' arch/arm64/boot/dts/qcom/jasmine_sprout.dts
+        # Verify all referenced files exist
+
+================================================================================
+PHASE 4: KERNEL CONFIGURATION
+================================================================================
+
+[ ] 4.1 Extract 4.4 defconfig
+        cat kernel-4.4/arch/arm64/configs/jasmine_sprout_defconfig > baseline.config
+        wc -l baseline.config
+
+[ ] 4.2 Create 4.19 defconfig base
+        cd kernel-4.19
+        cp ../baseline.config .config
+
+[ ] 4.3 Run oldconfig to adapt to 4.19
+        make ARCH=arm64 oldconfig
+        # Review new options presented
+        # Press ENTER to accept defaults
+        # Save changes to .config
+
+[ ] 4.4 Compare before/after configs
+        diff ../baseline.config .config | head -50
+        # Note major changes
+        # Focus on: THERMAL, CPUFREQ, DRM, USB, MMC
+
+[ ] 4.5 Critical config options to verify
+        # Check these are enabled (=y)
+        grep '^CONFIG_THERMAL=' .config
+        grep '^CONFIG_CPUFREQ=' .config
+        grep '^CONFIG_DRM_MSM=' .config
+        grep '^CONFIG_USB=' .config
+        grep '^CONFIG_MMC=' .config
+        grep '^CONFIG_QCOM' .config | head -10
+
+[ ] 4.6 Enable Xiaomi-specific options if needed
+        # Check what was enabled in 4.4
+        grep '=y$' ../baseline.config | wc -l
+        # Compare with 4.19
+        grep '=y$' .config | wc -l
+        # Missing options should be researched individually
+
+[ ] 4.7 Save final config as defconfig
+        make ARCH=arm64 savedefconfig
+        cp defconfig arch/arm64/configs/jasmine_sprout_defconfig
+        wc -l arch/arm64/configs/jasmine_sprout_defconfig
+
+================================================================================
+PHASE 5: CRITICAL DRIVERS - THERMAL
+================================================================================
+
+[ ] 5.1 Extract 4.4 thermal changes
+        cd kernel-4.4
+        git diff HEAD~100..HEAD -- drivers/thermal/ > thermal-changes.patch
+        wc -l thermal-changes.patch
+
+[ ] 5.2 Identify Xiaomi thermal customizations
+        grep 'thermal' arch/arm64/boot/dts/qcom/jasmine_sprout*.dts
+        # Look for:
+        #   - thermal-zones
+        #   - cooling-maps
+        #   - thermal sensors
+
+[ ] 5.3 Check if Xiaomi has custom thermal driver
+        find kernel-4.4 -path '*thermal*jasmine*' -o -path '*thermal*xiaomi*'
+        # If yes, extract and review
+
+[ ] 5.4 Apply thermal device tree customizations to 4.19
+        # Copy Xiaomi's thermal DT definitions to 4.19
+        # Test: adb shell cat /sys/class/thermal/thermal_zone*/temp
+
+[ ] 5.5 Test thermal management on device
+        adb shell cat /sys/class/thermal/thermal_zone*/type
+        adb shell cat /sys/class/thermal/thermal_zone*/temp
+        # All values should be reasonable (not 0 or huge numbers)
+
+================================================================================
+PHASE 6: CRITICAL DRIVERS - DISPLAY
+================================================================================
+
+[ ] 6.1 Compare DRM/MDSS changes between 4.4 and 4.19
+        cd kernel-4.4
+        git log --oneline HEAD~50..HEAD -- drivers/gpu/drm/msm/
+        # Review commit messages for Xiaomi customizations
+
+[ ] 6.2 Extract display-related Xiaomi patches
+        git diff HEAD~50..HEAD -- drivers/gpu/drm/msm/ > drm-changes.patch
+        # Review changes - look for Xiaomi-specific code
+
+[ ] 6.3 Identify changes already in 4.19 upstream
+        cd kernel-4.19
+        git log --oneline --all -- drivers/gpu/drm/msm/ | head -20
+        # Check if same fixes are already applied
+
+[ ] 6.4 Cherry-pick only necessary DRM patches
+        # Apply only Xiaomi-specific customizations
+        # NOT generic kernel fixes (already in 4.19)
+
+[ ] 6.5 Test display on device
+        adb logcat | grep -i 'drm\|mdss\|gpu'
+        adb shell getprop ro.hardware.displayname
+        # Display should turn on and show content
+
+================================================================================
+PHASE 7: CRITICAL DRIVERS - AUDIO
+================================================================================
+
+[ ] 7.1 Extract 4.4 audio driver changes
+        cd kernel-4.4
+        git diff HEAD~30..HEAD -- sound/soc/msm/ > audio-changes.patch
+        wc -l audio-changes.patch
+
+[ ] 7.2 Identify WCD9335 codec customizations
+        # WCD9335 is Mi A2's audio codec
+        grep -r 'wcd9335\|WCD9335' audio-changes.patch
+        # Extract codec-specific changes
+
+[ ] 7.3 Check audio device tree definitions
+        grep -A10 'audio' kernel-4.4/arch/arm64/boot/dts/qcom/jasmine_sprout.dts
+        # Copy audio nodes to 4.19 device tree
+
+[ ] 7.4 Test audio on device
+        adb logcat | grep -i 'audio\|wcd\|asoc'
+        adb shell getprop ro.hardware.audio
+        # Audio should be detected and functional
+
+================================================================================
+PHASE 8: CRITICAL DRIVERS - MODEM/RIL
+================================================================================
+
+[ ] 8.1 Identify modem-related kernel customizations
+        grep -r 'modem\|mhi\|ril' kernel-4.4/arch/arm64/boot/dts/qcom/jasmine_sprout.dts
+        # Extract modem node definitions
+
+[ ] 8.2 Check QMI (Qualcomm Message Interface) support
+        grep 'CONFIG_QMI' kernel-4.4/.config
+        # Ensure same options in 4.19 config
+
+[ ] 8.3 Verify modem driver loading
+        adb logcat | grep -i 'subsys\|modem\|mhi'
+        adb shell ls -la /dev/mhi*
+        adb shell lsmod | grep -i modem
+        # Modem subsystem should be detected
+
+[ ] 8.4 Test cellular functionality
+        adb shell getprop ro.telephony.use_old_mnc_mcc_format
+        # Check cellular data connection
+
+================================================================================
+PHASE 9: POWER MANAGEMENT
+================================================================================
+
+[ ] 9.1 Extract CPU frequency scaling customizations
+        grep -r 'cpufreq' kernel-4.4/arch/arm64/boot/dts/qcom/jasmine_sprout.dts
+        grep 'CONFIG_CPUFREQ' kernel-4.4/.config
+        # Copy to 4.19
+
+[ ] 9.2 Check battery management driver (BMS)
+        grep -r 'battery\|bms\|power_supply' kernel-4.4/arch/arm64/boot/dts/qcom/jasmine_sprout.dts
+        # Copy battery management nodes to 4.19 DT
+
+[ ] 9.3 Verify power management on device
+        adb shell cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq
+        adb shell cat /sys/class/power_supply/battery/capacity
+        # CPU freq should change, battery should report capacity
+
+[ ] 9.4 Monitor thermal throttling
+        adb shell cat /proc/thermal/cdev*/max_state
+        # Check under load: while true; do yes > /dev/null; done
+        # Monitor: adb shell top -n 1 | head
+
+================================================================================
+PHASE 10: BUILD & INITIAL TESTING
+================================================================================
+
+[ ] 10.1 Run build script
+        chmod +x build-kernel-4.19.sh
+        ./build-kernel-4.19.sh 2>&1 | tee build.log
+        # Should complete successfully
+
+[ ] 10.2 Verify build artifacts
+        ls -lh out/arch/arm64/boot/Image.gz
+        ls -lh out/arch/arm64/boot/dts/qcom/jasmine_sprout.dtb
+        # Files should exist and have reasonable sizes
+
+[ ] 10.3 Validate device tree
+        chmod +x device-tree-validation.sh
+        ./device-tree-validation.sh
+        # Should pass all checks
+
+[ ] 10.4 Check module compatibility
+        find out/modules_staging -name '*.ko' | wc -l
+        # Count and list modules
+
+[ ] 10.5 Create boot image
+        # Requires: mkbootimg tool
+        python mkbootimg.py \
+          --kernel out/arch/arm64/boot/Image.gz \
+          --ramdisk ramdisk.cpio.gz \
+          --dtb out/arch/arm64/boot/dts/qcom/jasmine_sprout.dtb \
+          --base 0x00000000 --pagesize 4096 -o boot.img
+        # Creates boot.img for flashing
+
+[ ] 10.6 Flash to device
+        adb reboot bootloader
+        fastboot flash boot boot.img
+        fastboot reboot
+        # Device should boot
+
+================================================================================
+PHASE 11: BOOT & FUNCTIONALITY TESTING
+================================================================================
+
+[ ] 11.1 Monitor boot sequence
+        adb logcat -b kernel | grep -i 'error\|panic\|fail'
+        # Should see boot messages without panics
+
+[ ] 11.2 Verify CPU cores online
+        adb shell grep 'processor' /proc/cpuinfo
+        # Should show 4 cores for jasmine_sprout
+
+[ ] 11.3 Test display output
+        adb shell getprop ro.hardware.displayname
+        # Should show Mi A2 or jasmine_sprout
+        # Physical display should show Android UI
+
+[ ] 11.4 Test touch input
+        adb shell getevent
+        # Touch screen should register events when touched
+
+[ ] 11.5 Test USB connection
+        adb shell lsusb
+        # USB device should be visible
+
+[ ] 11.6 Test camera HAL
+        adb logcat | grep -i 'camera\|libcamera'
+        # Camera service should start without crashes
+
+[ ] 11.7 Test audio
+        # Try to play sound: media player or notification
+        adb logcat | grep -i 'audio\|wcd'
+        # Audio should be heard
+
+[ ] 11.8 Test modem detection
+        adb logcat | grep -i 'modem\|subsys'
+        adb shell getprop ro.telephony.use_old_mnc_mcc_format
+        # Modem should be detected
+
+[ ] 11.9 Test WiFi
+        adb shell wpa_cli status
+        # WiFi interface should be available
+
+[ ] 11.10 Test storage I/O
+        adb shell dd if=/dev/zero of=/data/test.bin bs=1M count=10
+        adb shell md5sum /data/test.bin
+        # I/O should work without corruption
+
+[ ] 11.11 Test thermal monitoring
+        adb shell cat /sys/class/thermal/thermal_zone*/temp
+        # Thermal zones should report reasonable temperatures
+
+[ ] 11.12 Test battery reporting
+        adb shell cat /sys/class/power_supply/battery/capacity
+        # Should show current battery percentage
+
+[ ] 11.13 Long-term stability test
+        # Let device run for 30 minutes
+        # Monitor for crashes: adb logcat | grep 'FATAL\|CRASH'
+        # Check dmesg: adb shell dmesg | tail -20
+
+================================================================================
+PHASE 12: VENDOR BLOB COMPATIBILITY CHECK
+================================================================================
+
+[ ] 12.1 Verify kernel symbol exports
+        nm vmlinux | grep -i qcamera
+        nm vmlinux | grep -i audio
+        # HAL libraries need these symbols
+
+[ ] 12.2 Check module loading
+        adb shell lsmod
+        # All expected modules should load
+
+[ ] 12.3 Monitor HAL crashes
+        adb logcat | grep -i 'hal\|process_name\|crash\|died'
+        # HALs should not crash on startup
+
+[ ] 12.4 Test camera functionality
+        # Use camera app or: adb shell am start -a android.media.action.STILL_IMAGE_CAMERA
+        # Camera preview should work
+
+[ ] 12.5 Test media playback
+        # Play video file to test video codec (uses camera HAL)
+        # Should display without artifacts
+
+================================================================================
+PHASE 13: OPTIMIZATION & FINAL CHECKS
+================================================================================
+
+[ ] 13.1 Kernel log analysis
+        adb shell dmesg > dmesg.txt
+        # Review for warnings: grep -i 'warn' dmesg.txt
+        # Address any deprecation warnings
+
+[ ] 13.2 Performance check
+        adb shell cat /proc/cpuinfo | grep BogoMIPS
+        # Compare with original kernel performance
+
+[ ] 13.3 Power consumption test
+        # Charge to 100%, run idle for 1 hour
+        # Check battery drain compared to kernel 4.4
+        adb shell dumpsys batterystats
+
+[ ] 13.4 Compile optimization options review
+        grep 'CONFIG_CC_OPTIMIZE' .config
+        # Consider: -O2 vs -Os trade-offs
+
+[ ] 13.5 Final documentation update
+        # Update PORTING_4.4_TO_4.19.md with:
+        # - Actual issues encountered
+        # - Solutions found
+        # - Performance results
+        # - Known limitations
+
+================================================================================
+PHASE 14: RELEASE PREPARATION
+================================================================================
+
+[ ] 14.1 Create release branch
+        git checkout -b release/4.19-jasmine_sprout
+        git push origin release/4.19-jasmine_sprout
+
+[ ] 14.2 Tag kernel version
+        git tag -a v4.19-jasmine_sprout -m 'Kernel 4.19 for Mi A2'
+        git push origin v4.19-jasmine_sprout
+
+[ ] 14.3 Create release notes
+        cat > RELEASE_NOTES.md << EOF
+# Kernel 4.19 for Xiaomi Mi A2 (jasmine_sprout)
+
+## Changes from 4.4
+- Upgraded to Linux kernel 4.19.295
+- Ported Xiaomi vendor customizations
+- [List major changes]
+
+## Testing
+- All core functionality tested
+- [List what was tested]
+
+## Known Issues
+- [List any known issues]
+
+EOF
+
+[ ] 14.4 Provide build instructions
+        cat > BUILD_INSTRUCTIONS.md << EOF
+# Building Kernel 4.19 for jasmine_sprout
+
+## Prerequisites
+- Kernel source tree
+- ARM64 cross-compiler
+- Device tree compiler (dtc)
+- mkbootimg tool
+
+## Build Steps
+1. ./build-kernel-4.19.sh
+2. [Create boot image]
+3. [Flash to device]
+
+EOF
+
+[ ] 14.5 Archive build artifacts
+        mkdir -p kernel-4.19-artifacts
+        cp out/arch/arm64/boot/Image.gz kernel-4.19-artifacts/
+        cp out/arch/arm64/boot/dts/qcom/jasmine_sprout.dtb kernel-4.19-artifacts/
+        tar czf kernel-4.19-jasmine_sprout-artifacts.tar.gz kernel-4.19-artifacts/
+
+================================================================================
+SUMMARY
+================================================================================
+
+Completion Status: ___ / 66 items
+
+Critical items (must complete):
+  Phase 1: Extraction ........... [ ]
+  Phase 3: Device tree ......... [ ]
+  Phase 4: Kernel config ....... [ ]
+  Phase 10: Build & test ....... [ ]
+  Phase 11: Boot & functionality [ ]
+
+Notes & Issues Encountered:
+_____________________________________________________________________________
+_____________________________________________________________________________
+_____________________________________________________________________________
+
+Date Completed: _______________
+Completed By: _________________
